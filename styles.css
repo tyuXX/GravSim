@@ -75,6 +75,19 @@ button:hover {
     border-top: 1px solid #444;
 }
 
+.stats {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 0;
+    color: #666;
+    font-family: monospace;
+    font-size: 14px;
+}
+
+.stats span {
+    margin: 0 10px;
+}
+
 .stats p {
     margin-bottom: 10px;
     font-size: 14px;

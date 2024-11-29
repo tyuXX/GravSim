@@ -3,6 +3,7 @@ const G = 6.67430e-11; // Real gravitational constant
 const SCALE_FACTOR = 1e8; // Scale factor for forces
 const PHYSICS_STEP = 1000 / 60; // Fixed timestep (60 updates per second)
 const VELOCITY_EPSILON = 1e-10; // Threshold for zero velocity
+const SOFTENING_FACTOR = 0.5; // Softening factor for close encounters
 
 let particles = [];
 let isPaused = false;
@@ -30,26 +31,58 @@ function updatePhysics() {
             const distanceSquared = dx * dx + dy * dy;
             const distance = Math.sqrt(distanceSquared);
 
-            // Handle close encounters with dampening
+            // Handle close encounters and collisions
             const minDistance = (particle.size + other.size) * 1.5;
             if (distance < minDistance) {
-                // Apply collision dampening
-                particle.vx *= dampening;
-                particle.vy *= dampening;
-                other.vx *= dampening;
-                other.vy *= dampening;
+                // Calculate relative velocity
+                const relativeVx = other.vx - particle.vx;
+                const relativeVy = other.vy - particle.vy;
+                const relativeSpeed = Math.sqrt(relativeVx * relativeVx + relativeVy * relativeVy);
+
+                // Calculate collision normal
+                const nx = dx / distance;
+                const ny = dy / distance;
+
+                // Calculate impulse magnitude (elastic collision with dampening)
+                const restitution = 1 - dampening;
+                const impulseMagnitude = (-(1 + restitution) * (relativeVx * nx + relativeVy * ny)) /
+                    (1/particle.mass + 1/other.mass);
+
+                // Apply impulse
+                const impulseX = nx * impulseMagnitude;
+                const impulseY = ny * impulseMagnitude;
+
+                particle.vx -= impulseX / particle.mass;
+                particle.vy -= impulseY / particle.mass;
+                other.vx += impulseX / other.mass;
+                other.vy += impulseY / other.mass;
+
+                // Separate particles to prevent sticking
+                const overlap = minDistance - distance;
+                const separationX = (overlap * dx) / distance;
+                const separationY = (overlap * dy) / distance;
+                
+                const totalMass = particle.mass + other.mass;
+                const particle_ratio = other.mass / totalMass;
+                const other_ratio = particle.mass / totalMass;
+                
+                particle.x -= separationX * particle_ratio;
+                particle.y -= separationY * particle_ratio;
+                other.x += separationX * other_ratio;
+                other.y += separationY * other_ratio;
+                
                 continue;
             }
 
-            // Calculate gravitational force with distance-based softening
-            const softening = Math.max(distance, minDistance);
-            const softeningSquared = softening * softening;
+            // Calculate gravitational force with softening
+            const softeningSquared = Math.max(distanceSquared, minDistance * minDistance * SOFTENING_FACTOR);
             const force = (G * particle.mass * other.mass) / softeningSquared;
             const scaledForce = force * SCALE_FACTOR;
 
             // Calculate and apply force components
-            const forceX = scaledForce * dx / distance;
-            const forceY = scaledForce * dy / distance;
+            const forceMagnitude = scaledForce / Math.sqrt(softeningSquared);
+            const forceX = dx * forceMagnitude;
+            const forceY = dy * forceMagnitude;
 
             // Apply forces (F = ma, so a = F/m)
             particle.ax += forceX / particle.mass;
@@ -58,12 +91,8 @@ function updatePhysics() {
             other.ay -= forceY / other.mass;
         }
 
-        // Update particle physics using Verlet integration
-        // Update position using velocity and acceleration
-        particle.x += particle.vx * dt + 0.5 * particle.ax * dt * dt;
-        particle.y += particle.vy * dt + 0.5 * particle.ay * dt * dt;
-        
-        // Update velocity
+        // Update particle physics using semi-implicit Euler integration
+        // Update velocity first
         particle.vx += particle.ax * dt;
         particle.vy += particle.ay * dt;
 
@@ -82,12 +111,16 @@ function updatePhysics() {
             }
         }
 
+        // Then update position using new velocity
+        particle.x += particle.vx * dt;
+        particle.y += particle.vy * dt;
+
         // Reset acceleration
         particle.ax = 0;
         particle.ay = 0;
     }
 
-    // Remove particles that are outside the simulation bounds with floating point comparison
+    // Remove particles that are outside the simulation bounds
     particles = particles.filter(particle => {
         const margin = particle.size;
         return particle.x >= -margin &&
