@@ -1,19 +1,19 @@
 class Simulator {
-    constructor(canvas, simSize) {
+    constructor(canvas) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
-        this.simSize = simSize;
         this.particles = [];
-        this.grid = new Grid(simSize, 100);
-        this.paused = false;
-        this.speedMultiplier = 1;
-        this.friction = 0;
-        this.frameCount = 0;
-        this.lastFpsUpdate = 0;
-        this.fps = 0;
+        this.simSize = 5000;
         this.zoom = 1.0;
         this.minZoom = 0.1;
         this.zoomSensitivity = 0.001;
+        this.frameCount = 0;
+        this.lastFpsUpdate = 0;
+        this.fps = 0;
+        this.scale = Math.min(
+            this.canvas.width / this.simSize,
+            this.canvas.height / this.simSize
+        ) * this.zoom;
 
         // Initialize physics worker
         this.physicsWorker = new Worker('physics-worker.js');
@@ -24,13 +24,6 @@ class Simulator {
         this.canvas.addEventListener('wheel', (e) => this.handleZoom(e.deltaY, e.clientX, e.clientY));
     }
 
-    calculateMaxZoom() {
-        // Calculate zoom level that would show the entire simulation
-        const horizontalZoom = this.canvas.width / this.simSize;
-        const verticalZoom = this.canvas.height / this.simSize;
-        return Math.min(horizontalZoom, verticalZoom);
-    }
-
     resize() {
         this.canvas.width = this.canvas.parentElement.clientWidth;
         this.canvas.height = this.canvas.parentElement.clientHeight;
@@ -38,30 +31,153 @@ class Simulator {
             this.canvas.width / this.simSize,
             this.canvas.height / this.simSize
         ) * this.zoom;
+        this.draw();
+    }
+
+    screenToWorld(screenX, screenY) {
+        const centerOffsetX = (this.canvas.width - this.simSize * this.scale) / 2;
+        const centerOffsetY = (this.canvas.height - this.simSize * this.scale) / 2;
+        return {
+            x: (screenX - centerOffsetX) / this.scale,
+            y: (screenY - centerOffsetY) / this.scale
+        };
+    }
+
+    worldToScreen(worldX, worldY) {
+        const centerOffsetX = (this.canvas.width - this.simSize * this.scale) / 2;
+        const centerOffsetY = (this.canvas.height - this.simSize * this.scale) / 2;
+        return {
+            x: worldX * this.scale + centerOffsetX,
+            y: worldY * this.scale + centerOffsetY
+        };
+    }
+
+    addParticle(x, y, mass, size) {
+        const particle = new Particle(x, y, mass, size);
+        this.particles.push(particle);
         
-        // Update simulation size in worker
+        // Send serialized particle data to physics worker
         this.physicsWorker.postMessage({
-            type: 'simSize',
-            size: this.simSize
+            type: 'update',
+            particles: this.particles.map(p => p.serialize())
+        });
+        return particle;
+    }
+
+    clear() {
+        this.particles = [];
+        this.physicsWorker.postMessage({
+            type: 'update',
+            particles: this.particles.map(p => p.serialize())
         });
     }
 
-    worldToScreen(x, y) {
-        const centerX = this.canvas.width / 2;
-        const centerY = this.canvas.height / 2;
-        return {
-            x: centerX + (x - this.simSize / 2) * this.scale,
-            y: centerY + (y - this.simSize / 2) * this.scale
-        };
+    draw() {
+        // Clear canvas
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // Draw grid
+        this.drawGrid();
+
+        // Draw particles
+        for (const particle of this.particles) {
+            const screenPos = this.worldToScreen(particle.x, particle.y);
+            this.ctx.beginPath();
+            this.ctx.arc(
+                screenPos.x,
+                screenPos.y,
+                particle.size * this.scale,
+                0,
+                Math.PI * 2
+            );
+            this.ctx.fillStyle = particle.color;
+            this.ctx.fill();
+        }
+
+        // Update object count
+        const objectCountElement = document.getElementById('objectCount');
+        if (objectCountElement) {
+            objectCountElement.textContent = `Objects: ${this.particles.length}`;
+        }
     }
 
-    screenToWorld(x, y) {
-        const centerX = this.canvas.width / 2;
-        const centerY = this.canvas.height / 2;
-        return {
-            x: (x - centerX) / this.scale + this.simSize / 2,
-            y: (y - centerY) / this.scale + this.simSize / 2
-        };
+    drawGrid() {
+        const minSpacing = 80; // Minimum pixels between grid lines
+        const baseIntervals = [1, 2, 5, 10]; // Possible base intervals
+        
+        // Calculate the world space size of minSpacing pixels
+        const worldSpaceMinSpacing = minSpacing / this.scale;
+        
+        // Find the appropriate power of 10
+        const power = Math.floor(Math.log10(worldSpaceMinSpacing));
+        const powerOf10 = Math.pow(10, power);
+        
+        // Find the appropriate base interval
+        let interval = baseIntervals[0] * powerOf10;
+        for (const base of baseIntervals) {
+            const testInterval = base * powerOf10;
+            if (testInterval > worldSpaceMinSpacing) {
+                break;
+            }
+            interval = testInterval;
+        }
+
+        // Calculate grid bounds
+        const startX = Math.floor(0 / interval) * interval;
+        const endX = Math.ceil(this.simSize / interval) * interval;
+        const startY = Math.floor(0 / interval) * interval;
+        const endY = Math.ceil(this.simSize / interval) * interval;
+
+        // Set grid style
+        this.ctx.strokeStyle = '#333';
+        this.ctx.lineWidth = 1;
+        this.ctx.fillStyle = '#666';
+        this.ctx.font = '12px Arial';
+        this.ctx.textAlign = 'right';
+        this.ctx.textBaseline = 'top';
+
+        // Draw vertical grid lines
+        for (let x = startX; x <= endX; x += interval) {
+            if (x < 0 || x > this.simSize) continue;
+            
+            const screenX = this.worldToScreen(x, 0).x;
+            this.ctx.beginPath();
+            this.ctx.moveTo(screenX, 0);
+            this.ctx.lineTo(screenX, this.canvas.height);
+            this.ctx.stroke();
+
+            // Draw coordinate label
+            let label = x.toString();
+            if (Math.abs(x) >= 1000) {
+                label = (x / 1000).toFixed(1) + 'k';
+            }
+            this.ctx.fillText(label, screenX - 5, 5);
+        }
+
+        // Draw horizontal grid lines
+        for (let y = startY; y <= endY; y += interval) {
+            if (y < 0 || y > this.simSize) continue;
+            
+            const screenY = this.worldToScreen(0, y).y;
+            this.ctx.beginPath();
+            this.ctx.moveTo(0, screenY);
+            this.ctx.lineTo(this.canvas.width, screenY);
+            this.ctx.stroke();
+
+            // Draw coordinate label
+            let label = y.toString();
+            if (Math.abs(y) >= 1000) {
+                label = (y / 1000).toFixed(1) + 'k';
+            }
+            this.ctx.fillText(label, 35, screenY + 5);
+        }
+    }
+
+    calculateMaxZoom() {
+        // Calculate zoom level that would show the entire simulation
+        const horizontalZoom = this.canvas.width / this.simSize;
+        const verticalZoom = this.canvas.height / this.simSize;
+        return Math.min(horizontalZoom, verticalZoom);
     }
 
     handleZoom(deltaY, mouseX, mouseY) {
@@ -79,7 +195,7 @@ class Simulator {
         if (zoomDelta < 0) { // Zooming out
             this.zoom = Math.max(maxZoom, newZoom);
         } else { // Zooming in
-            this.zoom = Math.max(this.minZoom, newZoom); // Keep minimum zoom limit for stability
+            this.zoom = Math.max(this.minZoom, newZoom);
         }
         
         // Update scale
@@ -91,7 +207,7 @@ class Simulator {
         // Get world position after zoom
         const worldAfter = this.screenToWorld(mouseX, mouseY);
         
-        // Adjust particle positions to maintain mouse position
+        // Adjust view to maintain mouse position
         const dx = worldAfter.x - worldBefore.x;
         const dy = worldAfter.y - worldBefore.y;
         
@@ -99,224 +215,13 @@ class Simulator {
         this.draw();
     }
 
-    addParticle(x, y, mass, size) {
-        const particle = new Particle(x, y, mass * 1e12, size);
-        this.particles.push(particle);
-        this.physicsWorker.postMessage({
-            type: 'update',
-            particles: this.particles
-        });
-        return particle;
-    }
-
-    clear() {
-        this.particles = [];
-        this.physicsWorker.postMessage({
-            type: 'update',
-            particles: this.particles
-        });
-    }
-
-    setPaused(paused) {
-        this.paused = paused;
-        this.physicsWorker.postMessage({
-            type: 'pause',
-            paused: paused
-        });
-    }
-
-    setSpeed(speed) {
-        this.speedMultiplier = speed;
-        this.physicsWorker.postMessage({
-            type: 'speed',
-            speed: speed
-        });
-    }
-
-    setFriction(value) {
-        this.physicsWorker.postMessage({
-            type: 'friction',
-            friction: value
-        });
-    }
-
-    setDampening(value) {
-        this.physicsWorker.postMessage({
-            type: 'dampening',
-            dampening: value
-        });
-    }
-
-    updateStats() {
-        // Update object count
-        const objectCountElement = document.getElementById('objectCount');
-        if (objectCountElement) {
-            objectCountElement.textContent = `Objects: ${this.particles.length}`;
-        }
-
-        // Update FPS
-        const now = performance.now();
-        this.frameCount++;
-        
-        if (now - this.lastFpsUpdate > 1000) {
-            this.fps = Math.round(this.frameCount * 1000 / (now - this.lastFpsUpdate));
-            this.frameCount = 0;
-            this.lastFpsUpdate = now;
-            
-            // Update FPS display
-            const fpsDisplay = document.getElementById('fps');
-            if (fpsDisplay) {
-                fpsDisplay.textContent = `FPS: ${this.fps}`;
-            }
-        }
-    }
-
-    draw() {
-        // Clear canvas
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        
-        // Draw grid
-        this.drawGrid();
-        
-        // Draw particles
-        for (const particle of this.particles) {
-            const screenPos = this.worldToScreen(particle.x, particle.y);
-            const screenSize = particle.size * this.scale;
-
-            // Skip if particle is outside view
-            if (screenPos.x + screenSize < 0 || 
-                screenPos.x - screenSize > this.canvas.width ||
-                screenPos.y + screenSize < 0 || 
-                screenPos.y - screenSize > this.canvas.height) {
-                continue;
-            }
-
-            // Draw particle
-            this.ctx.beginPath();
-            this.ctx.arc(screenPos.x, screenPos.y, screenSize, 0, Math.PI * 2);
-            
-            // Color based on mass (logarithmic scale)
-            const massValue = Math.log10(particle.mass) / 10;
-            const hue = 240 * (1 - massValue); // Blue (240) to Red (0)
-            this.ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
-            
-            this.ctx.fill();
-        }
-
-        // Update stats
-        this.updateStats();
-    }
-
-    drawGrid() {
-        const ctx = this.ctx;
-        ctx.strokeStyle = '#333333';
-        ctx.fillStyle = '#666666';
-        ctx.font = '10px Arial';
-        
-        // Calculate ideal grid size based on screen space
-        const minGridSpacing = 80; // Minimum pixels between grid lines
-        const worldWidth = Math.abs(this.screenToWorld(this.canvas.width, 0).x - this.screenToWorld(0, 0).x);
-        const worldHeight = Math.abs(this.screenToWorld(0, this.canvas.height).y - this.screenToWorld(0, 0).y);
-        
-        // Find appropriate grid size (powers of 10)
-        const baseExp = Math.floor(Math.log10(worldWidth * minGridSpacing / this.canvas.width));
-        let gridSize = Math.pow(10, baseExp);
-        
-        // Fine-tune grid size using 2 and 5 multiples
-        const normalizedSpacing = (gridSize * this.scale);
-        if (normalizedSpacing < minGridSpacing) {
-            if (normalizedSpacing * 2 >= minGridSpacing) {
-                gridSize *= 2;
-            } else if (normalizedSpacing * 5 >= minGridSpacing) {
-                gridSize *= 5;
-            } else {
-                gridSize *= 10;
-            }
-        }
-        
-        // Calculate visible area in world coordinates
-        const topLeft = this.screenToWorld(0, 0);
-        const bottomRight = this.screenToWorld(this.canvas.width, this.canvas.height);
-        
-        // Calculate grid start and end points
-        const startX = Math.floor(topLeft.x / gridSize) * gridSize;
-        const endX = Math.ceil(bottomRight.x / gridSize) * gridSize;
-        const startY = Math.floor(topLeft.y / gridSize) * gridSize;
-        const endY = Math.ceil(bottomRight.y / gridSize) * gridSize;
-        
-        ctx.beginPath();
-        ctx.lineWidth = 0.5;
-        
-        // Draw vertical lines and x-coordinates
-        for (let x = startX; x <= endX; x += gridSize) {
-            const screenX = this.worldToScreen(x, 0).x;
-            
-            // Draw grid line
-            ctx.moveTo(screenX, 0);
-            ctx.lineTo(screenX, this.canvas.height);
-            
-            // Format number based on size
-            let label;
-            if (Math.abs(x) >= 1000) {
-                label = (x / 1000).toFixed(1) + 'k';
-            } else {
-                label = x.toFixed(0);
-            }
-            
-            // Position label in the top-left corner
-            const textWidth = ctx.measureText(label).width;
-            
-            // Draw background for better readability
-            ctx.save();
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            ctx.fillRect(screenX - textWidth/2 - 2, 2, textWidth + 4, 14);
-            ctx.restore();
-            
-            // Draw text
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-            ctx.fillText(label, screenX, 4);
-        }
-        
-        // Draw horizontal lines and y-coordinates
-        for (let y = startY; y <= endY; y += gridSize) {
-            const screenY = this.worldToScreen(0, y).y;
-            
-            // Draw grid line
-            ctx.moveTo(0, screenY);
-            ctx.lineTo(this.canvas.width, screenY);
-            
-            // Format number based on size
-            let label;
-            if (Math.abs(y) >= 1000) {
-                label = (y / 1000).toFixed(1) + 'k';
-            } else {
-                label = y.toFixed(0);
-            }
-            
-            // Position label on the left side
-            // Draw background for better readability
-            ctx.save();
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'middle';
-            const textWidth = ctx.measureText(label).width;
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            ctx.fillRect(4, screenY - 7, textWidth + 4, 14);
-            ctx.restore();
-            
-            // Draw text
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(label, 6, screenY);
-        }
-        
-        ctx.stroke();
-    }
-
     handlePhysicsMessage(e) {
         if (e.data.type === 'update') {
-            this.particles = e.data.particles;
-            // Update object count after physics update
+            // Update particles with deserialized data
+            this.particles = e.data.particles.map(p => Particle.deserialize(p));
+            this.draw();
+
+            // Update object count
             const objectCountElement = document.getElementById('objectCount');
             if (objectCountElement) {
                 objectCountElement.textContent = `Objects: ${this.particles.length}`;
@@ -324,20 +229,54 @@ class Simulator {
         }
     }
 
+    init() {
+        // Send initial serialized particle data to physics worker
+        this.physicsWorker.postMessage({
+            type: 'init',
+            particles: this.particles.map(p => p.serialize()),
+            simSize: this.simSize
+        });
+    }
+
     animate(currentTime) {
-        this.draw();
+        // Calculate FPS
+        if (currentTime - this.lastFpsUpdate >= 1000) {
+            this.fps = this.frameCount;
+            this.frameCount = 0;
+            this.lastFpsUpdate = currentTime;
+
+            // Update FPS display
+            const fpsElement = document.getElementById('fps');
+            if (fpsElement) {
+                fpsElement.textContent = `FPS: ${this.fps}`;
+            }
+        }
+        this.frameCount++;
+
         requestAnimationFrame((time) => this.animate(time));
     }
 
     start() {
         // Initialize physics worker with current particles and simulation size
-        this.physicsWorker.postMessage({
-            type: 'init',
-            particles: this.particles,
-            simSize: this.simSize
-        });
+        this.init();
         
         // Start animation loop
         requestAnimationFrame((time) => this.animate(time));
+    }
+
+    setPaused(paused) {
+        this.physicsWorker.postMessage({ type: 'pause', paused });
+    }
+
+    setSpeed(speed) {
+        this.physicsWorker.postMessage({ type: 'speed', speed });
+    }
+
+    setFriction(friction) {
+        this.physicsWorker.postMessage({ type: 'friction', friction });
+    }
+
+    setDampening(dampening) {
+        this.physicsWorker.postMessage({ type: 'dampening', dampening });
     }
 }
