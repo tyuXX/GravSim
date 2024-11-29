@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gravity Simulator</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <canvas id="simCanvas"></canvas>
+        <div class="controls">
+            <div class="control-group">
+                <label for="simSpeed">Simulation Speed:</label>
+                <select id="simSpeed">
+                    <option value="0.25">0.25x</option>
+                    <option value="0.5">0.5x</option>
+                    <option value="1" selected>1x</option>
+                    <option value="2">2x</option>
+                    <option value="5">5x</option>
+                    <option value="unlimited">No Limit</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="friction">Space Friction:</label>
+                <input type="range" id="friction" min="0" max="100" value="1" step="1">
+                <span id="frictionValue">1%</span>
+            </div>
+            <div class="control-group">
+                <label for="dampening">Collision Dampening:</label>
+                <input type="range" id="dampening" min="0" max="100" value="5" step="1">
+                <span id="dampeningValue">5%</span>
+            </div>
+            <div class="control-group">
+                <label for="simSize">Simulation Size:</label>
+                <input type="number" id="simSize" value="5000" min="1000" step="1000">
+                <span>units</span>
+            </div>
+            <div class="control-group">
+                <label for="objectSize">Object Size:</label>
+                <input type="number" id="objectSize" value="10" min="1" max="100">
+            </div>
+            <div class="control-group">
+                <label for="objectMass">Object Mass:</label>
+                <input type="number" id="objectMass" value="1000" min="100">
+            </div>
+            <div class="control-group">
+                <button id="addObject">Add Object</button>
+                <button id="clearSim">Clear Simulation</button>
+                <button id="pauseSim">Pause</button>
+            </div>
+            <div class="stats">
+                <p>Objects: <span id="objectCount">0</span></p>
+                <p>FPS: <span id="fps">0</span></p>
+            </div>
+        </div>
+    </div>
+    <script src="grid.js"></script>
+    <script src="particle.js"></script>
+    <script src="simulator.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
